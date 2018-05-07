@@ -1,5 +1,31 @@
-# For deep learning
+#!/usr/bin/env python
+
+###############
+# ROS Imports #
+###############
+
+# Python libs
+import sys, time, os
+
+# OpenCV
+import cv2
+
+# Ros libraries
+import roslib
 import rospy
+
+# Ros Messages
+from sensor_msgs.msg import CompressedImage
+# We do not use cv_bridge it does not support CompressedImage in python
+# from cv_bridge import CvBridge, CvBridgeError
+
+
+##############
+# DL Imports #
+##############
+
+import tensorflow as tf
+
 from keras.applications.inception_v3 import InceptionV3
 from keras.preprocessing import image
 from keras.models import Model
@@ -7,31 +33,15 @@ from keras.layers import Dense, GlobalAveragePooling2D
 from keras.callbacks import ModelCheckpoint, EarlyStopping
 from keras import backend as K
 from keras.utils import np_utils
-import tensorflow as tf
 
-# For image manipulation
-from sklearn.feature_extraction import image
-import scipy.misc
-
-# For math
 import numpy as np
-from numpy import random
 import math
 
-# For file manipulation
-import os
-import glob
-import pickle
+VERBOSE=False
+DISPLAY_IMG=False
+CAM_SUB='/cam_pub/image_raw/compressed'
 
-# For graphing
-import matplotlib.pyplot as plt
-from matplotlib.pyplot import imshow
-
-# For reading images
-from matplotlib.image import imread
-
-# For data manipulation
-from sklearn.model_selection import train_test_split
+ROS_PKG_PATH = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 
 def radians_to_degrees(x):
     deg = math.degrees(x + math.pi)
@@ -41,45 +51,78 @@ def degrees_to_radians(x):
     rad = math.radians(x) - math.pi
     return rad
 
-#def load_data(file):
-def load_data():
-    
-    file = '/steering_new/second_spot1/101_1.07687.jpg'
+class DeepSteer(object):
 
-    # Load image
-    img = imread(file)
+    def __init__(self, weights_path, hyperparameters, shape):
+        self.weights_path = weights_path
+        print('Loading model...')
+        self.model = self._initModel(hyperparameters, shape)
+        print('Loading weights...')
+        self.model.load_weights(weights_path)
+        print('Done!')
 
-    # Extract label
-    value = file.split('_')[-1].replace('.jpg','') # Remove the idx from filepath
-    label = radians_to_degrees(float(value))
+    def getAngleForImage(self, img):
+        pred = self.model.predict(img, batch_size=1)
+        return pred[0][0]
 
-    return img, label
+    def _initModel(self, hyperparameters, shape):
 
-def init_model(img, hyperparameters):
+        print(shape)
+        base_model = InceptionV3(weights=None, include_top=False, input_shape=shape)
 
-    base_model = InceptionV3(weights=None, include_top=False, input_shape=img[0].shape)
+        # add a global spatial average pooling layer
+        x = base_model.output
+        x = GlobalAveragePooling2D()(x)
 
-    # add a global spatial average pooling layer
-    x = base_model.output
-    x = GlobalAveragePooling2D()(x)
+        # add a fully-connected layer
+        x = Dense(hyperparameters["fc_size"], activation=hyperparameters["fc_activation"])(x)
 
-    # add a fully-connected layer
-    x = Dense(hyperparameters["fc_size"], activation=hyperparameters["fc_activation"])(x)
+        # add a logistic layer
+        predictions = Dense(1, kernel_initializer='normal')(x)
 
-    # add a logistic layer
-    predictions = Dense(1, kernel_initializer='normal')(x)
+        # train this model
+        model = Model(inputs=base_model.input, outputs=predictions)
+        for layer in base_model.layers:
+            layer.trainable = False
 
-    # train this model
-    model = Model(inputs=base_model.input, outputs=predictions)
-    for layer in base_model.layers:
-        layer.trainable = False
+        # compile the model (should be done *after* setting layers to non-trainable)
+        model.compile(optimizer='adam', loss=hyperparameters["loss"], metrics=hyperparameters["metrics"])
 
-    # compile the model (should be done *after* setting layers to non-trainable)
-    model.compile(optimizer='adam', loss=hyperparameters["loss"], metrics=hyperparameters["metrics"])
+        return model
 
-    return model
 
-def main():
+class ROSImageSub:
+
+    def __init__(self):
+        '''Initialize ros subscriber'''
+        # subscribed Topic
+        self.subscriber = rospy.Subscriber(CAM_SUB,
+            CompressedImage, self.callback,  queue_size = 1)
+        if VERBOSE :
+            print "subscribed to %s" % CAM_SUB
+
+
+    def callback(self, ros_data):
+        '''Callback function of subscribed topic.'''
+        if VERBOSE :
+            print 'received image of type: "%s"' % ros_data.format
+
+        #### direct conversion to CV2 ####
+        np_arr = np.fromstring(ros_data.data, np.uint8)
+        image_np = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+
+        print('Input image shape', image_np.shape)
+
+        turn = deepSteer.getAngleForImage(image_np)
+
+        print(turn)
+
+        if DISPLAY_IMG:
+            cv2.imshow('cv_img', image_np)
+            cv2.waitKey(2)
+
+if __name__ == '__main__':
+
     # Hyperparameters
     hyperparameters = {
         "batchsize" : 32,
@@ -92,32 +135,19 @@ def main():
         "monitor" : 'val_loss'
     }
 
-    # # Load steering images
+    weights_file = os.path.join(ROS_PKG_PATH, 'weights/final_weights.h5')
 
-    # fname = input("Enter filename to image: ")
+    # Create model
+    global deepSteer
+    deepSteer = DeepSteer(weights_file, hyperparameters, (480, 640, 3))
 
-#img_o, label_o = load_data(fname)
-    img_o, label_o = load_data()
+    # Init ROS
+    im_sub = ROSImageSub()
+    rospy.init_node('deep_steer', anonymous=True)
 
-    img = np.array([img_o])
-    img = img / 255.
-    label = np.array([label_o]).reshape([1,1])
+    try:
+        rospy.spin()
+    except KeyboardInterrupt:
+        print('Shutting down ROS deep_drive')
 
-    print "img ",img.shape
-    print "lab ",label.shape
-
-    # # Create model
-    model = init_model(img, hyperparameters)
-
-    final_weights_path = "/weights/final_weights.h5"
-
-    model.load_weights(final_weights_path)
-
-    prediction = model.predict(img,batch_size=1)
-
-    print "Prediction: ", prediction[0][0]
-    print "Actual: ", label[0][0]
-    print "-------------------------"
-    print "Error: ", abs(prediction[0][0] - label[0][0])
-
-main()
+    if DISPLAY_IMG: cv2.destroyAllWindows()

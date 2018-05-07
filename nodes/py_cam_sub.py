@@ -43,6 +43,8 @@ class image_feature:
         np_arr = np.fromstring(ros_data.data, np.uint8)
         image_np = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
 
+        print(image_np.shape)
+
         if DISPLAY_IMG:
             cv2.imshow('cv_img', image_np)
             cv2.waitKey(2)
