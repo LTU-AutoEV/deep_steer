@@ -16,8 +16,9 @@ import rospy
 
 # Ros Messages
 from sensor_msgs.msg import CompressedImage
-from dbw_gem_msgs.msg import ThrottleCmd
-from dbw_gem_msgs.msg import SteeringCmd
+# from dbw_gem_msgs.msg import ThrottleCmd
+# from dbw_gem_msgs.msg import SteeringCmd
+from geometry_msgs.msg import Twist
 # We do not use cv_bridge it does not support CompressedImage in python
 # from cv_bridge import CvBridge, CvBridgeError
 
@@ -54,7 +55,7 @@ def radians_to_degrees(x):
     return deg
 
 def degrees_to_radians(x):
-    rad = math.radians(x) - math.pi
+    rad = math.radians(x)
     return rad
 
 class DeepSteer(object):
@@ -82,8 +83,11 @@ class DeepSteer(object):
 
     def getAngleForImage(self, img):
         pred = self.model.predict(img)
-        degrees = 180 - (pred[0][0] / 1000.0) * self.multip_
-        return (self.offset_ + degrees_to_radians(degrees), self.fwd_speed_)
+        deg = pred[0][0] / 1000
+        print(deg)
+        deg = (180 - deg) * 0.1 * self.multip_
+        print(deg)
+        return (self.offset_ + degrees_to_radians(deg), self.fwd_speed_)
 
     def _initModel(self, hyperparameters, shape):
 
@@ -125,8 +129,9 @@ class ROSImageSub:
         self.subscriber = rospy.Subscriber(CAM_SUB,
             CompressedImage, self.callback,  queue_size = 1, buff_size=52428800)
 
-        self.throttle_pub = rospy.Publisher('/vehicle/throttle_cmd', ThrottleCmd)
-        self.steer_pub = rospy.Publisher('/vehicle/steering_cmd', SteeringCmd)
+        # self.throttle_pub = rospy.Publisher('/vehicle/throttle_cmd', ThrottleCmd)
+        # self.steer_pub = rospy.Publisher('/vehicle/steering_cmd', SteeringCmd)
+        self.twist_pub = rospy.Publisher('/vehicle/cmd_vel', Twist)
 
         if VERBOSE :
             print "subscribed to %s" % CAM_SUB
@@ -154,14 +159,20 @@ class ROSImageSub:
 
         turn = deepSteer.getAngleForImage(image_np)
 
-        scmd = SteeringCmd()
-        tcmd = ThrottleCmd()
+        msg = Twist()
+        msg.angular.z = turn[0]
+        msg.linear.x = turn[1]
+        self.twist_pub.publish(msg)
 
-        scmd.steering_wheel_angle_cmd = turn[0]
-        tcmd.pedal_cmd = turn[1]
+        # scmd = SteeringCmd()
+        # tcmd = ThrottleCmd()
+        # ThrottleCmd.CMD_PERCENT
 
-        self.steer_pub.publish(scmd)
-        self.throttle_pub.publish(tcmd)
+        # scmd.steering_wheel_angle_cmd = turn[0]
+        # tcmd.pedal_cmd = turn[1]
+
+        # self.steer_pub.publish(scmd)
+        # self.throttle_pub.publish(tcmd)
 
         print(turn)
 
