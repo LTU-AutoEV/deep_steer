@@ -16,6 +16,8 @@ import rospy
 
 # Ros Messages
 from sensor_msgs.msg import CompressedImage
+from dbw_gem_msgs.msg import ThrottleCmd
+from dbw_gem_msgs.msg import SteeringCmd
 # We do not use cv_bridge it does not support CompressedImage in python
 # from cv_bridge import CvBridge, CvBridgeError
 
@@ -122,6 +124,10 @@ class ROSImageSub:
         # subscribed Topic
         self.subscriber = rospy.Subscriber(CAM_SUB,
             CompressedImage, self.callback,  queue_size = 1, buff_size=52428800)
+
+        self.throttle_pub = rospy.Publisher('/vehicle/throttle_cmd', ThrottleCmd)
+        self.steer_pub = rospy.Publisher('/vehicle/steering_cmd', SteeringCmd)
+
         if VERBOSE :
             print "subscribed to %s" % CAM_SUB
 
@@ -144,9 +150,18 @@ class ROSImageSub:
 
         # Convert to single item tensor (3,32,32) => (1,3,32,32)
         image_np = np.expand_dims(image_np, axis=0)
-        print('Input image shape', image_np.shape)
+        # print('Input image shape', image_np.shape)
 
         turn = deepSteer.getAngleForImage(image_np)
+
+        scmd = SteeringCmd()
+        tcmd = ThrottleCmd()
+
+        scmd.steering_wheel_angle_cmd = turn[0]
+        tcmd.pedal_cmd = turn[1]
+
+        self.steer_pub.publish(scmd)
+        self.throttle_pub.publish(tcmd)
 
         print(turn)
 
