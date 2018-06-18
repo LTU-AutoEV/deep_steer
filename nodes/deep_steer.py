@@ -38,7 +38,7 @@ import numpy as np
 import math
 
 VERBOSE=False
-DISPLAY_IMG=False
+DISPLAY_IMG=True
 CAM_SUB='/cam_pub/image_raw/compressed'
 
 ROS_PKG_PATH = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
@@ -62,8 +62,11 @@ class DeepSteer(object):
         print('Done!')
 
     def getAngleForImage(self, img):
-        pred = self.model.predict(img, batch_size=1)
-        return pred[0][0]
+        pred = self.model.predict(img)
+        print('pred:')
+        for p in pred:
+            print(p)
+        return pred[0][0] / 1000.0
 
     def _initModel(self, hyperparameters, shape):
 
@@ -88,6 +91,12 @@ class DeepSteer(object):
         # compile the model (should be done *after* setting layers to non-trainable)
         model.compile(optimizer='adam', loss=hyperparameters["loss"], metrics=hyperparameters["metrics"])
 
+        # fix model loading bug
+        # https://github.com/keras-team/keras/issues/2397
+        model._make_predict_function()
+
+        print(model.summary())
+
         return model
 
 
@@ -97,7 +106,7 @@ class ROSImageSub:
         '''Initialize ros subscriber'''
         # subscribed Topic
         self.subscriber = rospy.Subscriber(CAM_SUB,
-            CompressedImage, self.callback,  queue_size = 1)
+            CompressedImage, self.callback,  queue_size = 1, buff_size=52428800)
         if VERBOSE :
             print "subscribed to %s" % CAM_SUB
 
@@ -107,19 +116,24 @@ class ROSImageSub:
         if VERBOSE :
             print 'received image of type: "%s"' % ros_data.format
 
+
         #### direct conversion to CV2 ####
         np_arr = np.fromstring(ros_data.data, np.uint8)
         image_np = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
 
+        image_np = cv2.resize(image_np, (320,240))
+
+        if DISPLAY_IMG:
+            cv2.imshow('cv_img', image_np)
+            cv2.waitKey(2)
+            
+        # Convert to single item tensor (3,32,32) => (1,3,32,32)
+        image_np = np.expand_dims(image_np, axis=0)
         print('Input image shape', image_np.shape)
 
         turn = deepSteer.getAngleForImage(image_np)
 
         print(turn)
-
-        if DISPLAY_IMG:
-            cv2.imshow('cv_img', image_np)
-            cv2.waitKey(2)
 
 if __name__ == '__main__':
 
@@ -139,7 +153,8 @@ if __name__ == '__main__':
 
     # Create model
     global deepSteer
-    deepSteer = DeepSteer(weights_file, hyperparameters, (480, 640, 3))
+    deepSteer = DeepSteer(weights_file, hyperparameters, (240, 320, 3))
+    # deepSteer = DeepSteer(weights_file, hyperparameters, (480, 640, 3))
 
     # Init ROS
     im_sub = ROSImageSub()
