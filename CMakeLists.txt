@@ -14,11 +14,18 @@ find_package(catkin REQUIRED COMPONENTS
   rospy
   sensor_msgs
   std_msgs
+  dynamic_reconfigure
 )
 
 find_package(OpenCV REQUIRED)
 
 catkin_python_setup()
+
+#add dynamic reconfigure api
+generate_dynamic_reconfigure_options(
+    cfg/DeepSteer.cfg
+)
+
 
 catkin_package()
 

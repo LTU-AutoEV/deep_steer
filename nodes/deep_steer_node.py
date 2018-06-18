@@ -19,6 +19,10 @@ from sensor_msgs.msg import CompressedImage
 # We do not use cv_bridge it does not support CompressedImage in python
 # from cv_bridge import CvBridge, CvBridgeError
 
+# Dynamic Reconfigure
+from dynamic_reconfigure.server import Server
+from deep_steer.cfg import DeepSteerConfig
+
 
 ##############
 # DL Imports #
@@ -61,12 +65,23 @@ class DeepSteer(object):
         self.model.load_weights(weights_path)
         print('Done!')
 
+        self.multip_ = 1.0
+        self.fwd_speed_ = 0.0
+        self.offset_ = 0.0
+
+    def setMultip(self, multip):
+        self.multip_ = multip;
+
+    def setFwdSpeed(self, speed):
+        self.fwd_speed_ = speed;
+
+    def setOffset(self, offset):
+        self.offset_ = offset
+
     def getAngleForImage(self, img):
         pred = self.model.predict(img)
-        print('pred:')
-        for p in pred:
-            print(p)
-        return pred[0][0] / 1000.0
+        degrees = 180 - (pred[0][0] / 1000.0) * self.multip_
+        return (self.offset_ + degrees_to_radians(degrees), self.fwd_speed_)
 
     def _initModel(self, hyperparameters, shape):
 
@@ -126,7 +141,7 @@ class ROSImageSub:
         if DISPLAY_IMG:
             cv2.imshow('cv_img', image_np)
             cv2.waitKey(2)
-            
+
         # Convert to single item tensor (3,32,32) => (1,3,32,32)
         image_np = np.expand_dims(image_np, axis=0)
         print('Input image shape', image_np.shape)
@@ -134,6 +149,16 @@ class ROSImageSub:
         turn = deepSteer.getAngleForImage(image_np)
 
         print(turn)
+
+# dynamic reconfigure callback
+def dynCfgCB(config, level):
+    global deepSteer
+
+    deepSteer.setMultip(config.multip)
+    deepSteer.setOffset(config.offset)
+    deepSteer.setFwdSpeed(config.fwd_speed)
+
+    return config
 
 if __name__ == '__main__':
 
@@ -157,8 +182,11 @@ if __name__ == '__main__':
     # deepSteer = DeepSteer(weights_file, hyperparameters, (480, 640, 3))
 
     # Init ROS
-    im_sub = ROSImageSub()
     rospy.init_node('deep_steer', anonymous=True)
+    im_sub = ROSImageSub()
+
+    # dynamic reconfigure
+    srv = Server(DeepSteerConfig, dynCfgCB)
 
     try:
         rospy.spin()
